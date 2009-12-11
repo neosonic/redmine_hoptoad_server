@@ -17,7 +17,7 @@ class NoticesController < ApplicationController
   def create
     redmine_params = YAML.load(@xml.at_css('api-key').content)
 
-    if authorized = Setting.mail_handler_api_key == redmine_params[:api_key]
+    if Setting.mail_handler_api_key == redmine_params[:api_key]
 
       # redmine objects
       project = Project.find_by_identifier(redmine_params[:project])
@@ -27,25 +27,37 @@ class NoticesController < ApplicationController
       error  = @xml.at_css('error')
       notice = @xml.at_css('notice')
 
-      error_class   = @xml.at_css('class').content
-      error_message = @xml.at_css('message').content
-      backtrace     = @xml.at_css('backtrace').content
+      error_class   = error.at_css('class').content
+      error_message = error.at_css('message').content
+      backtrace     = error.at_css('backtrace')
 
-      request = @xml.at_css('request').content
-      server_environment = @xml.at_css('server-environment').content
+      request = @xml.at_css('request')
+      server_environment = @xml.at_css('server-environment')
 
       # build filtered backtrace
       project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
-      filtered_backtrace = backtrace.reject{|line| (TRACE_FILTERS+project_trace_filters).map{|filter| line.scan(filter)}.flatten.compact.uniq.any?}
 
+
+      if backtrace.children.size > 0
+        line = backtrace.children.first
+        first_error = "#{line['file']}:#{line['number']}"
+      end
+
+      filtered_backtrace = []
+
+      backtrace.children.each do |line|
+        filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
+      end
 
       if filtered_backtrace.size > 0
         # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
-        subject = "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"[0,255]
+        subject = "#{error_class} in #{first_error.gsub('[RAILS_ROOT]','')}"[0,255]
+
         # build description including a link to source repository
         repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
-        repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
-        description = "Redmine Notifier reported an Error related to source:#{repo_root}/#{repo_file}#L#{repo_line}"
+        repo_file, repo_line = first_error.gsub('[RAILS_ROOT]','').gsub(/^\//,'')
+
+        description = "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
       else
         subject = "#{error_class}: #{error_message}"[0,255]
         description = "Redmine Notifier reported an Error"
@@ -90,11 +102,11 @@ class NoticesController < ApplicationController
       journal = issue.init_journal(
         author,
         "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
-        "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
-        "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
-        "h4. Request\n\n<pre>#{request.to_yaml}</pre>\n\n" +
-        # "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
-        "h4. Environment\n\n<pre>#{server_environment.to_yaml}</pre>"
+        "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace}</pre>\n\n" +
+        "h4. Full backtrace\n\n<pre>#{backtrace}</pre>\n\n" +
+        "h4. Request\n\n<pre>#{request.to_xml}</pre>\n\n" +
+        "h4. Environment\n\n<pre>#{server_environment.to_xml}</pre>" +
+        "h4. Full XML\n\n<pre>#{@xml.to_xml}</pre>\n\n"
       )
 
       # reopen issue
@@ -120,7 +132,7 @@ class NoticesController < ApplicationController
   def index
     notice = YAML.load(request.raw_post)['notice']
     redmine_params = YAML.load(notice['api_key'])
-    
+
     if Setting.mail_handler_api_key == redmine_params[:api_key]
 
       # redmine objects
@@ -148,7 +160,7 @@ class NoticesController < ApplicationController
         repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'')
         repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
       end
-      
+
       subject =
         if backtrace
           # build subject by removing method name and '[RAILS_ROOT]'
@@ -157,7 +169,7 @@ class NoticesController < ApplicationController
           # No backtrace, construct a simple subject
           "[#{error_class}] #{error_message.split("\n").first}"
         end[0,255] # make sure it fits in a varchar
-      
+
 
       description =
         if backtrace
@@ -174,12 +186,12 @@ class NoticesController < ApplicationController
         tracker.id,
         author.id
       )
-                                                                                                              
+
       if issue.new_record?
         # set standard redmine issue fields
         issue.category = IssueCategory.find_by_name(redmine_params[:category]) unless redmine_params[:category].blank?
         issue.assigned_to = User.find_by_login(redmine_params[:assigned_to]) unless redmine_params[:assigned_to].blank?
-        issue.priority_id = redmine_params[:priority] unless redmine_params[:priority].blank?
+        # issue.priority_id = redmine_params[:priority] unless redmine_params[:priority].blank?
         issue.description = description
 
         # make sure that custom fields are associated to this project and tracker

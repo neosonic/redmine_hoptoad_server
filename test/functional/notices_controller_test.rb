@@ -1,10 +1,15 @@
 require File.dirname(__FILE__) + '/../test_helper'
 
 class NoticesControllerTest < ActionController::TestCase
+  fixtures :enumerations, :issues, :projects, :trackers
+
   def test_api_v2
     t = Tracker.create(:name => 'Bug')
     p = Project.create(:name => 'Sample Project', :identifier => 'sample-project')
 
+
+    IssuePriority.create!(:opt => "IPRI", :name => 'Normal', :position => 2, :is_default => true)
+    IssueStatus.create!(:name => 'New', :is_closed => false, :is_default => true, :position => 1)
     p.trackers << t
     p.save
 
@@ -14,9 +19,10 @@ class NoticesControllerTest < ActionController::TestCase
     sample_error = File.read(File.dirname(__FILE__) + '/../fixtures/hoptoad_notification_v2.xml')
     @request.env["RAW_POST_DATA"] = sample_error
 
-    post 'create'
-
-
+    assert_difference 'Issue.count' do
+        post :create
+        assert assigns(:xml)
+    end
   end
 
   # TODO:
