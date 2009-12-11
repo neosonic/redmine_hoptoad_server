@@ -14,7 +14,7 @@ class NoticesController < ApplicationController
     notice = YAML.load(request.raw_post)['notice']
     redmine_params = YAML.load(notice['api_key'])
     
-    if authorized = Setting.mail_handler_api_key == redmine_params[:api_key]
+    if Setting.mail_handler_api_key == redmine_params[:api_key]
 
       # redmine objects
       project = Project.find_by_identifier(redmine_params[:project])
@@ -27,16 +27,39 @@ class NoticesController < ApplicationController
 
       # build filtered backtrace
       backtrace = notice['back'].blank? ? notice['backtrace'] : notice['back']
-      project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
-      filtered_backtrace = backtrace.reject{|line| (TRACE_FILTERS+project_trace_filters).map{|filter| line.scan(filter)}.flatten.compact.uniq.any?}
+      backtrace = nil if backtrace.blank?
+
+      if backtrace
+        project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').
+          split(/[,\s\n\r]+/)
+
+        filtered_backtrace =
+          backtrace.reject do |line|
+            (TRACE_FILTERS+project_trace_filters).map {|filter| line.scan(filter)}.flatten.compact.uniq.any?
+          end
+
+        repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'')
+        repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
+      end
       
-      # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
-      subject = "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"[0,255]
+      subject =
+        if backtrace
+          # No backtrace, construct a simple subject
+          "[#{error_class}] #{error_message.split("\n").first}"
+        else
+          # build subject by removing method name and '[RAILS_ROOT]'
+          "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"
+        end[0,255] # make sure it fits in a varchar
       
-      # build description including a link to source repository
-      repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
-      repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
-      description = "Redmine Notifier reported an Error related to source:#{repo_root}/#{repo_file}#L#{repo_line}"
+
+      description =
+        if backtrace
+          # build description including a link to source repository
+          "Redmine Notifier reported an Error related to source:#{repo_root}/#{repo_file}#L#{repo_line}"
+        else
+          # The whole error message
+          error_message
+        end
 
       issue = Issue.find_or_initialize_by_subject_and_project_id_and_tracker_id_and_author_id(
         subject,
@@ -71,15 +94,18 @@ class NoticesController < ApplicationController
       value.save!
 
       # update journal
-      journal = issue.init_journal(
-        author, 
-        "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
-        "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
-        "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
-        "h4. Request\n\n<pre>#{notice['request'].to_yaml}</pre>\n\n" +
-        "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
-        "h4. Environment\n\n<pre>#{notice['environment'].to_yaml}</pre>"
-      )
+      journal =
+        if backtrace
+          issue.init_journal(
+            author, # XXX - use the defined Redmine formatter, do not assume everyone uses textile!
+            "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
+            "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
+            "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
+            "h4. Request\n\n<pre>#{notice['request'].to_yaml}</pre>\n\n" +
+            "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
+            "h4. Environment\n\n<pre>#{notice['environment'].to_yaml}</pre>"
+          )
+        end
 
       # reopen issue
       if issue.status.blank? or issue.status.is_closed?                                                                                                        
@@ -90,7 +116,7 @@ class NoticesController < ApplicationController
 
       if issue.new_record?
         Mailer.deliver_issue_add(issue) if Setting.notified_events.include?('issue_added')
-      else
+      elsif journal
         Mailer.deliver_issue_edit(journal) if Setting.notified_events.include?('issue_updated')
       end
       
