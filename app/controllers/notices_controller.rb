@@ -1,19 +1,128 @@
+require 'nokogiri'
+
 class NoticesController < ApplicationController
 
   before_filter :check_if_login_required, :except => 'index'
   before_filter :find_or_create_custom_fields
 
-  unloadable  
+  before_filter :check_notifier_version, :only => :create
+
+  unloadable
 
   TRACE_FILTERS = [
     /^On\sline\s#\d+\sof/,
     /^\d+:/
   ]
 
+  def create
+    redmine_params = YAML.load(@xml.at_css('api-key').content)
+
+    if authorized = Setting.mail_handler_api_key == redmine_params[:api_key]
+
+      # redmine objects
+      project = Project.find_by_identifier(redmine_params[:project])
+      tracker = project.trackers.find_by_name(redmine_params[:tracker])
+      author  = User.anonymous
+
+      error  = @xml.at_css('error')
+      notice = @xml.at_css('notice')
+
+      error_class   = @xml.at_css('class').content
+      error_message = @xml.at_css('message').content
+      backtrace     = @xml.at_css('backtrace').content
+
+      request = @xml.at_css('request').content
+      server_environment = @xml.at_css('server-environment').content
+
+      # build filtered backtrace
+      project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
+      filtered_backtrace = backtrace.reject{|line| (TRACE_FILTERS+project_trace_filters).map{|filter| line.scan(filter)}.flatten.compact.uniq.any?}
+
+
+      if filtered_backtrace.size > 0
+        # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
+        subject = "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"[0,255]
+        # build description including a link to source repository
+        repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
+        repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
+        description = "Redmine Notifier reported an Error related to source:#{repo_root}/#{repo_file}#L#{repo_line}"
+      else
+        subject = "#{error_class}: #{error_message}"[0,255]
+        description = "Redmine Notifier reported an Error"
+      end
+
+      issue = Issue.find_by_subject_and_project_id_and_tracker_id_and_author_id(subject, project.id, tracker.id, author.id )
+
+      if issue.nil?
+        issue = Issue.new
+        issue.subject = subject
+        issue.project = project
+        issue.tracker = tracker
+        issue.author = author
+      end
+
+      if issue.new_record?
+        # set standard redmine issue fields
+        issue.category = IssueCategory.find_by_name(redmine_params[:category]) unless redmine_params[:category].blank?
+        issue.assigned_to = User.find_by_login(redmine_params[:assigned_to]) unless redmine_params[:assigned_to].blank?
+        issue.priority_id = redmine_params[:priority] unless redmine_params[:priority].blank?
+        issue.description = description
+
+        # make sure that custom fields are associated to this project and tracker
+        project.issue_custom_fields << @error_class_field unless project.issue_custom_fields.include?(@error_class_field)
+        tracker.custom_fields << @error_class_field unless tracker.custom_fields.include?(@error_class_field)
+        project.issue_custom_fields << @occurences_field unless project.issue_custom_fields.include?(@occurences_field)
+        tracker.custom_fields << @occurences_field unless tracker.custom_fields.include?(@occurences_field)
+
+        # set custom field error class
+        issue.custom_values.build(:custom_field => @error_class_field, :value => error_class)
+      end
+
+      issue.save!
+
+      # increment occurences custom field
+      value = issue.custom_value_for(@occurences_field) || issue.custom_values.build(:custom_field => @occurences_field, :value => 0)
+      value.value = (value.value.to_i + 1).to_s
+      logger.error value.value
+      value.save!
+
+      # update journal
+      journal = issue.init_journal(
+        author,
+        "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
+        "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
+        "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
+        "h4. Request\n\n<pre>#{request.to_yaml}</pre>\n\n" +
+        # "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
+        "h4. Environment\n\n<pre>#{server_environment.to_yaml}</pre>"
+      )
+
+      # reopen issue
+      if issue.status.blank? or issue.status.is_closed?
+        issue.status = IssueStatus.find(:first, :conditions => {:is_default => true}, :order => 'position ASC')
+      end
+
+      issue.save!
+
+      if issue.new_record?
+        Mailer.deliver_issue_add(issue) if Setting.notified_events.include?('issue_added')
+      else
+        Mailer.deliver_issue_edit(journal) if Setting.notified_events.include?('issue_updated')
+      end
+
+      render :status => 200, :text => "Received bug report. Created/updated issue #{issue.id}."
+    else
+      logger.info 'Unauthorized Hoptoad API request.'
+      render :status => 403, :text => 'You provided a wrong or no Redmine API key.'
+    end
+
+    render :status => 200, :text => "Received bug report. Created/updated issue #{issue.id}."
+  end
+
   def index
     notice = YAML.load(request.raw_post)['notice']
     redmine_params = YAML.load(notice['api_key'])
-    
+
     if authorized = Setting.mail_handler_api_key == redmine_params[:api_key]
 
       # redmine objects
@@ -29,10 +138,10 @@ class NoticesController < ApplicationController
       backtrace = notice['back'].blank? ? notice['backtrace'] : notice['back']
       project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
       filtered_backtrace = backtrace.reject{|line| (TRACE_FILTERS+project_trace_filters).map{|filter| line.scan(filter)}.flatten.compact.uniq.any?}
-      
+
       # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
       subject = "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"[0,255]
-      
+
       # build description including a link to source repository
       repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
       repo_file, repo_line = filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
@@ -44,7 +153,7 @@ class NoticesController < ApplicationController
         tracker.id,
         author.id
       )
-                                                                                                              
+
       if issue.new_record?
         # set standard redmine issue fields
         issue.category = IssueCategory.find_by_name(redmine_params[:category]) unless redmine_params[:category].blank?
@@ -57,7 +166,7 @@ class NoticesController < ApplicationController
         tracker.custom_fields << @error_class_field unless tracker.custom_fields.include?(@error_class_field)
         project.issue_custom_fields << @occurences_field unless project.issue_custom_fields.include?(@occurences_field)
         tracker.custom_fields << @occurences_field unless tracker.custom_fields.include?(@occurences_field)
-        
+
         # set custom field error class
         issue.custom_values.build(:custom_field => @error_class_field, :value => error_class)
       end
@@ -72,7 +181,7 @@ class NoticesController < ApplicationController
 
       # update journal
       journal = issue.init_journal(
-        author, 
+        author,
         "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
         "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
         "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
@@ -82,7 +191,7 @@ class NoticesController < ApplicationController
       )
 
       # reopen issue
-      if issue.status.blank? or issue.status.is_closed?                                                                                                        
+      if issue.status.blank? or issue.status.is_closed?
         issue.status = IssueStatus.find(:first, :conditions => {:is_default => true}, :order => 'position ASC')
       end
 
@@ -93,16 +202,16 @@ class NoticesController < ApplicationController
       else
         Mailer.deliver_issue_edit(journal) if Setting.notified_events.include?('issue_updated')
       end
-      
+
       render :status => 200, :text => "Received bug report. Created/updated issue #{issue.id}."
     else
       logger.info 'Unauthorized Hoptoad API request.'
       render :status => 403, :text => 'You provided a wrong or no Redmine API key.'
     end
   end
-  
+
   protected
-  
+
   def find_or_create_custom_fields
     @error_class_field = IssueCustomField.find_or_initialize_by_name('Error class')
     if @error_class_field.new_record?
@@ -127,6 +236,15 @@ class NoticesController < ApplicationController
       @repository_root_field.attributes = {:field_format => 'string'}
       @repository_root_field.save(false)
     end
-
   end
+
+  def check_notifier_version
+    if request.raw_post =~ /^\<\?xml/
+      @xml = Nokogiri::XML(request.raw_post)
+      return @xml.at_css('notice')['version'][0].chr == '2'
+    end
+
+    return false
+  end
+
 end
