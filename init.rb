@@ -1,8 +1,8 @@
 require 'redmine'
 
 Redmine::Plugin.register :redmine_hoptoad_server do
-  name 'Redmine Hoptoad Server plugin'
-  author 'Jan Schulz-Hofen'
-  description 'This plugin turns Redmin into a Hoptoad server, i.e. an API provider which can be used with the hoptoad_notifier which is available at: http://www.hoptoadapp.com/'
-  version '0.0.1'
+  name 'Hoptoad Server'
+  author 'Jan Schulz-Hofen, Marcello Barnaba'
+  description 'Redmine acts as an Hoptoad server with this plugin. Hoptoad is an HTTP(S) API, available at http://www.hoptoadapp.com/, to allow automatic reporting of application exceptions. This flavour of the plugin allows Redmine to receive plain-text notifications, useful if you use the Hoptoad facility for e.g. user feedbacks'
+  version '0.0.2'
 end
