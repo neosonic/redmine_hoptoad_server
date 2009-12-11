@@ -90,7 +90,6 @@ class NoticesController < ApplicationController
       # increment occurences custom field
       value = issue.custom_value_for(@occurences_field) || issue.custom_values.build(:custom_field => @occurences_field, :value => 0)
       value.value = (value.value.to_i + 1).to_s
-      logger.error value.value
       value.save!
 
       # update journal
