@@ -105,6 +105,8 @@ class NoticesController < ApplicationController
             "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
             "h4. Environment\n\n<pre>#{notice['environment'].to_yaml}</pre>"
           )
+        elsif issue.description != description # If a user sends a double feedback, save the text into a new comment
+          issue.init_journal(author, description)
         end
 
       # reopen issue
