@@ -1,7 +1,6 @@
 require File.dirname(__FILE__) + '/../test_helper'
 
 class NoticesControllerTest < ActionController::TestCase
-  fixtures :enumerations, :issues, :projects, :trackers
 
   def test_api_v2
     t = Tracker.create(:name => 'Bug')
