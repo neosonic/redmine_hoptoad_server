@@ -115,8 +115,6 @@ class NoticesController < ApplicationController
       logger.info 'Unauthorized Hoptoad API request.'
       render :status => 403, :text => 'You provided a wrong or no Redmine API key.'
     end
-
-    render :status => 200, :text => "Received bug report. Created/updated issue #{issue.id}."
   end
 
   def index
