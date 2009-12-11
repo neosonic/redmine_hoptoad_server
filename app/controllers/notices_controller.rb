@@ -44,11 +44,11 @@ class NoticesController < ApplicationController
       
       subject =
         if backtrace
-          # No backtrace, construct a simple subject
-          "[#{error_class}] #{error_message.split("\n").first}"
-        else
           # build subject by removing method name and '[RAILS_ROOT]'
           "#{error_class} in #{filtered_backtrace.first.split(':in').first.gsub('[RAILS_ROOT]','')}"
+        else
+          # No backtrace, construct a simple subject
+          "[#{error_class}] #{error_message.split("\n").first}"
         end[0,255] # make sure it fits in a varchar
       
 
