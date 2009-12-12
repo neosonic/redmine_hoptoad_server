@@ -24,28 +24,29 @@ class NoticesController < ApplicationController
       tracker = project.trackers.find_by_name(redmine_params[:tracker])
       author  = User.anonymous
 
-      error  = @xml.at_css('error')
-      notice = @xml.at_css('notice')
+      error_class   = @xml.at_xpath('/notice/error/class').content
+      error_message = @xml.at_xpath('/notice/error/message').content
+      backtrace     = @xml.xpath('/notice/error/backtrace/line')
 
-      error_class   = error.at_css('class').content
-      error_message = error.at_css('message').content
-      backtrace     = error.at_css('backtrace')
-
-      request = @xml.at_css('request')
-      server_environment = @xml.at_css('server-environment')
+      request = @xml.at_xpath('/notice/request')
+      server_environment = @xml.at_xpath('/notice/server-environment')
 
       # build filtered backtrace
       project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
 
-
-      if backtrace.children.size > 0
-        line = backtrace.children.first
+      if backtrace.size > 0
+        line = backtrace.first
         first_error = "#{line['file']}:#{line['number']}"
       end
 
       filtered_backtrace = []
 
-      backtrace.children.each do |line|
+      backtrace.each do |line|
+        # make the first non-hoptoad line in the stack-trace the first_error
+        if line !=~ /hoptoad_notifier/
+          first_error ||= line
+        end
+
         filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
       end
 
@@ -55,6 +56,7 @@ class NoticesController < ApplicationController
 
         # build description including a link to source repository
         repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
+
         repo_file, repo_line = first_error.gsub('[RAILS_ROOT]','').gsub(/^\//,'')
 
         description = "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
