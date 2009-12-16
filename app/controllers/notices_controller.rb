@@ -30,6 +30,7 @@ class NoticesController < ApplicationController
 
       request = @xml.at_xpath('/notice/request')
       server_environment = @xml.at_xpath('/notice/server-environment')
+      project_root = @xml.at_xpath('/notice/server-environment/project-root').content + '/'
 
       # build filtered backtrace
       project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
@@ -52,7 +53,7 @@ class NoticesController < ApplicationController
 
       if filtered_backtrace.size > 0
         # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
-        subject = "#{error_class} in #{first_error.gsub('[RAILS_ROOT]','')}"[0,255]
+        subject = "#{error_class} in #{first_error.gsub('[RAILS_ROOT]','').gsub(project_root, '')}"[0,255]
 
         # build description including a link to source repository
         repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
@@ -61,7 +62,7 @@ class NoticesController < ApplicationController
 
         description = "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
       else
-        subject = "#{error_class}: #{error_message}"[0,255]
+        subject = "#{error_class}: #{error_message.gsub(project_root, '')}"[0,255]
         description = "Redmine Notifier reported an Error"
       end
 
