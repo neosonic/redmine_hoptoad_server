@@ -24,13 +24,18 @@ class NoticesController < ApplicationController
       tracker = project.trackers.find_by_name(redmine_params[:tracker])
       author  = User.anonymous
 
+      # error class and message
       error_class   = @xml.at_xpath('/notice/error/class').content
       error_message = @xml.at_xpath('/notice/error/message').content
       backtrace     = @xml.xpath('/notice/error/backtrace/line')
 
-      request = @xml.at_xpath('/notice/request')
+      # shorten long messages
+      error_message = "#{error_message[0...120]}..." if error_message.length > 255
+
+      request            = @xml.at_xpath('/notice/request')
       server_environment = @xml.at_xpath('/notice/server-environment')
-      project_root = @xml.at_xpath('/notice/server-environment/project-root').content + '/'
+      session            = @xml.at_xpath('/notice/session')
+      project_root       = @xml.at_xpath('/notice/server-environment/project-root').content + '/'
 
       # build filtered backtrace
       project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
@@ -38,6 +43,9 @@ class NoticesController < ApplicationController
       if backtrace.size > 0
         line = backtrace.first
         first_error = "#{line['file']}:#{line['number']}"
+
+        repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
+        repo_file, repo_line = first_error.gsub('[RAILS_ROOT]','').gsub(/^\//,'').split(':')
       end
 
       filtered_backtrace = []
@@ -48,33 +56,36 @@ class NoticesController < ApplicationController
           first_error ||= line
         end
 
-        filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
+        unless (TRACE_FILTERS+project_trace_filters).map {|filter| line.scan(filter)}.flatten.compact.uniq.any?
+          filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
+        end
       end
 
-      if filtered_backtrace.size > 0
-        # build subject by removing method name and '[RAILS_ROOT]', make sure it fits in a varchar
-        subject = "#{error_class} in #{first_error.gsub('[RAILS_ROOT]','').gsub(project_root, '')}"[0,255]
+      filter_backtrace = nil unless filtered_backtrace.size > 0
 
-        # build description including a link to source repository
-        repo_root = project.custom_value_for(@repository_root_field).value.gsub(/\/$/,'') rescue nil
+      subject =
+        if backtrace
+          # build subject by removing method name and '[RAILS_ROOT]'
+          "#{error_class} in #{first_error.gsub('[RAILS_ROOT]','').gsub(project_root, '')}"
+        else
+          # No backtrace, construct a simple subject
+          "[#{error_class}] #{error_message.split("\n").first}"
+        end[0,255] # make sure it fits in a varchar
 
-        repo_file, repo_line = first_error.gsub('[RAILS_ROOT]','').gsub(/^\//,'')
+      description =
+        if backtrace
+          # build description including a link to source repository
+          "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
+        else
+          "Redmine Notifier reported an Error"
+        end
 
-        description = "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
-      else
-        subject = "#{error_class}: #{error_message.gsub(project_root, '')}"[0,255]
-        description = "Redmine Notifier reported an Error"
-      end
-
-      issue = Issue.find_by_subject_and_project_id_and_tracker_id_and_author_id(subject, project.id, tracker.id, author.id )
-
-      if issue.nil?
-        issue = Issue.new
-        issue.subject = subject
-        issue.project = project
-        issue.tracker = tracker
-        issue.author = author
-      end
+      issue = Issue.find_or_initialize_by_subject_and_project_id_and_tracker_id_and_author_id(
+        subject,
+        project.id,
+        tracker.id,
+        author.id
+      )
 
       if issue.new_record?
         # set standard redmine issue fields
@@ -102,15 +113,21 @@ class NoticesController < ApplicationController
       value.save!
 
       # update journal
-      journal = issue.init_journal(
-        author,
-        "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
-        "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace}</pre>\n\n" +
-        "h4. Full backtrace\n\n<pre>#{backtrace}</pre>\n\n" +
-        "h4. Request\n\n<pre>#{request.to_xml}</pre>\n\n" +
-        "h4. Environment\n\n<pre>#{server_environment.to_xml}</pre>" +
-        "h4. Full XML\n\n<pre>#{@xml.to_xml}</pre>\n\n"
-      )
+      journal =
+        if backtrace
+          issue.init_journal(
+            author, # XXX - use the defined Redmine formatter, do not assume everyone uses textile!
+            "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
+            "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace}</pre>\n\n" +
+            "h4. Full backtrace\n\n<pre>#{backtrace}</pre>\n\n" +
+            "h4. Request\n\n<pre>#{request.to_xml}</pre>\n\n" +
+            "h4. Session\n\n<pre>#{session.to_yaml}</pre>\n\n" +
+            "h4. Environment\n\n<pre>#{server_environment.to_xml}</pre>" +
+            "h4. Full XML\n\n<e>#{@xml.to_xml}</pre>\n\n"
+          )
+        elsif issue.description != description # If a user sends a double feedback, save the text into a new comment
+          issue.init_journal(author, description)
+        end
 
       # reopen issue
       if issue.status.blank? or issue.status.is_closed?
@@ -121,7 +138,7 @@ class NoticesController < ApplicationController
 
       if issue.new_record?
         Mailer.deliver_issue_add(issue) if Setting.notified_events.include?('issue_added')
-      else
+      elsif journal
         Mailer.deliver_issue_edit(journal) if Setting.notified_events.include?('issue_updated')
       end
 
@@ -141,19 +158,25 @@ class NoticesController < ApplicationController
       # redmine objects
       project = Project.find_by_identifier(redmine_params[:project])
       tracker = project.trackers.find_by_name(redmine_params[:tracker])
-      author = User.anonymous
+      author  = User.anonymous
 
       # error class and message
-      error_class = notice['error_class']
-      error_message = notice['error_message'].length > 255 ? "#{notice['error_message'][0...120]}..." : notice['error_message']
+      error_class   = notice['error_class']
+      error_message = notice['error_message']
+      backtrace     = notice['back'].blank? ? notice['backtrace'] : notice['back']
+
+      # shorten long messages
+      error_message = "#{error_message[0...120]}..." if error_message.length > 255
+
+      request            = notice['request']
+      server_environment = notice['server-environment']
+      session            = notice['session']
 
       # build filtered backtrace
-      backtrace = notice['back'].blank? ? notice['backtrace'] : notice['back']
       backtrace = nil if backtrace.blank?
 
       if backtrace
-        project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').
-          split(/[,\s\n\r]+/)
+        project_trace_filters = (project.custom_value_for(@trace_filter_field).value rescue '').split(/[,\s\n\r]+/)
 
         filtered_backtrace =
           backtrace.reject do |line|
@@ -222,9 +245,9 @@ class NoticesController < ApplicationController
             "h4. Error message\n\n<pre>#{error_message}</pre>\n\n" +
             "h4. Filtered backtrace\n\n<pre>#{filtered_backtrace.to_yaml}</pre>\n\n" +
             "h4. Full backtrace\n\n<pre>#{backtrace.to_yaml}</pre>\n\n" +
-            "h4. Request\n\n<pre>#{notice['request'].to_yaml}</pre>\n\n" +
-            "h4. Session\n\n<pre>#{notice['session'].to_yaml}</pre>\n\n" +
-            "h4. Environment\n\n<pre>#{notice['environment'].to_yaml}</pre>"
+            "h4. Request\n\n<pre>#{request.to_yaml}</pre>\n\n" +
+            "h4. Session\n\n<pre>#{session.to_yaml}</pre>\n\n" +
+            "h4. Environment\n\n<pre>#{server_environment.to_yaml}</pre>"
           )
         elsif issue.description != description # If a user sends a double feedback, save the text into a new comment
           issue.init_journal(author, description)

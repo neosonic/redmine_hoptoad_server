@@ -19,8 +19,8 @@ class NoticesControllerTest < ActionController::TestCase
     @request.env["RAW_POST_DATA"] = sample_error
 
     assert_difference 'Issue.count' do
-        post :create
-        assert assigns(:xml)
+      post :create
+      assert assigns(:xml)
     end
   end
 
