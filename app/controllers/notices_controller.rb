@@ -145,7 +145,7 @@ class NoticesController < ApplicationController
 
       # error class and message
       error_class = notice['error_class']
-      error_message = notice['error_message']
+      error_message = notice['error_message'].length > 255 ? "#{notice['error_message'][0...120]}..." : notice['error_message']
 
       # build filtered backtrace
       backtrace = notice['back'].blank? ? notice['backtrace'] : notice['back']
@@ -173,7 +173,6 @@ class NoticesController < ApplicationController
           "[#{error_class}] #{error_message.split("\n").first}"
         end[0,255] # make sure it fits in a varchar
 
-
       description =
         if backtrace
           # build description including a link to source repository
@@ -194,7 +193,7 @@ class NoticesController < ApplicationController
         # set standard redmine issue fields
         issue.category = IssueCategory.find_by_name(redmine_params[:category]) unless redmine_params[:category].blank?
         issue.assigned_to = User.find_by_login(redmine_params[:assigned_to]) unless redmine_params[:assigned_to].blank?
-        # issue.priority_id = redmine_params[:priority] unless redmine_params[:priority].blank?
+        issue.priority_id = redmine_params[:priority] unless redmine_params[:priority].blank?
         issue.description = description
 
         # make sure that custom fields are associated to this project and tracker
