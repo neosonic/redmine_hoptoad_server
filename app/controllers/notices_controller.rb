@@ -2,7 +2,7 @@ require 'nokogiri'
 
 class NoticesController < ApplicationController
 
-  before_filter :check_if_login_required, :except => 'index'
+  skip_before_filter :check_if_login_required
   before_filter :find_or_create_custom_fields
 
   before_filter :check_notifier_version, :only => :create
