@@ -56,7 +56,7 @@ class NoticesController < ApplicationController
           first_error ||= line
         end
 
-        unless (TRACE_FILTERS+project_trace_filters).map {|filter| line.scan(filter)}.flatten.compact.uniq.any?
+        unless (TRACE_FILTERS+project_trace_filters).map {|filter| line.to_s.scan(filter)}.flatten.compact.uniq.any?
           filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
         end
       end
@@ -80,12 +80,15 @@ class NoticesController < ApplicationController
           "Redmine Notifier reported an Error"
         end
 
-      issue = Issue.find_or_initialize_by_subject_and_project_id_and_tracker_id_and_author_id(
-        subject,
-        project.id,
-        tracker.id,
-        author.id
-      )
+        issue = Issue.find_by_subject_and_project_id_and_tracker_id_and_author_id(subject, project.id, tracker.id, author.id)
+
+        if issue.nil?
+          issue = Issue.new
+          issue.subject = subject
+          issue.project = project
+          issue.tracker = tracker
+          issue.author = author
+        end
 
       if issue.new_record?
         # set standard redmine issue fields
