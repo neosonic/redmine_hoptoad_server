@@ -7,7 +7,7 @@ class NoticesControllerTest < ActionController::TestCase
     p = Project.create(:name => 'Sample Project', :identifier => 'sample-project')
 
 
-    IssuePriority.create!(:opt => "IPRI", :name => 'Normal', :position => 2, :is_default => true)
+    IssuePriority.create!(:name => 'Normal', :position => 2, :is_default => true)
     IssueStatus.create!(:name => 'New', :is_closed => false, :is_default => true, :position => 1)
     p.trackers << t
     p.save
