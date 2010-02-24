@@ -22,6 +22,15 @@ class NoticesControllerTest < ActionController::TestCase
       post :create
       assert assigns(:xml)
     end
+
+    @issue = Issue.find(:first, :order => 'id DESC')
+
+    assert_equal 'Special Error in vendor/plugins/hoptoad_notifier/lib/hoptoad_notifier.rb:136', @issue.subject
+    assert_equal 'Redmine Notifier reported an Error related to source: /my_app/vendor/plugins/hoptoad_notifier/lib/hoptoad_notifier.rb#L136', @issue.description
+
+    assert_equal 1, @issue.journals.size
+    @journal = @issue.journals.first
+    assert_match /Special Error/, @journal.notes, "Missing Error message"
   end
 
   # TODO:
