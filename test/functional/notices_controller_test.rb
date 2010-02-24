@@ -7,8 +7,8 @@ class NoticesControllerTest < ActionController::TestCase
     p = Project.create(:name => 'Sample Project', :identifier => 'sample-project')
 
 
-    IssuePriority.create!(:name => 'Normal', :position => 2, :is_default => true)
-    IssueStatus.create!(:name => 'New', :is_closed => false, :is_default => true, :position => 1)
+    priority = IssuePriority.create!(:name => 'Normal', :position => 2, :is_default => true)
+    status = IssueStatus.create!(:name => 'New', :is_closed => false, :is_default => true, :position => 1)
     p.trackers << t
     p.save
 
@@ -27,6 +27,10 @@ class NoticesControllerTest < ActionController::TestCase
 
     assert_equal 'Special Error in vendor/plugins/hoptoad_notifier/lib/hoptoad_notifier.rb:136', @issue.subject
     assert_equal 'Redmine Notifier reported an Error related to source: /my_app/vendor/plugins/hoptoad_notifier/lib/hoptoad_notifier.rb#L136', @issue.description
+    assert_equal t, @issue.tracker
+    assert_equal p, @issue.project
+    assert_equal status, @issue.status
+    assert_equal priority, @issue.priority
 
     assert_equal 1, @issue.journals.size
     @journal = @issue.journals.first
