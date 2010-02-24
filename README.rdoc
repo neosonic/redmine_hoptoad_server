@@ -6,7 +6,17 @@ This is a simple Redmine plugin that makes Redmine act like a Hoptoad server. Al
 
 Just install the Plugin following the general Redmine plugin installation instructions at http://www.redmine.org/wiki/redmine/Plugins.
 
-Then, go to Administration -> Settings -> Incoming emails in your Redmine and generate an API key.
+== Option 1: System wide API key
+
+Go to Administration -> Settings -> Incoming emails in your Redmine and generate an API key.
+
+== Option 2: Per project API key
+
+1. Go to Administration -> Custom Field and create a new Project Custom Field (text).  Name it something like Hoptoad API Key.
+2. Go to Administration -> Plugins -> Redmine Hoptoad Server and select the custom field you created above.
+3. Go to Your Project -> Settings and enter any string you want into the API custom field.  This will be the API key you use in the Hoptoad client (below).
+
+== Configuring the Hoptoad client
 
 Now, download and install the HoptoadNotifier following the excellent instructions on their github page http://github.com/thoughtbot/hoptoad_notifier.
 

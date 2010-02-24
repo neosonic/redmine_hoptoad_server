@@ -17,7 +17,8 @@ class NoticesController < ApplicationController
   def create
     redmine_params = YAML.load(@xml.at_css('api-key').content)
 
-    if Setting.mail_handler_api_key == redmine_params[:api_key]
+    if (Setting.mail_handler_api_enabled? && Setting.mail_handler_api_key == redmine_params[:api_key]) ||
+        project_specific_key?(redmine_params[:project], redmine_params[:api_key])
 
       # redmine objects
       project = Project.find_by_identifier(redmine_params[:project])
@@ -313,4 +314,20 @@ class NoticesController < ApplicationController
     return false
   end
 
+  private
+
+  def project_specific_key?(project_identifier, api_key)
+    return false if project_identifier.blank? || api_key.blank?
+
+    project = Project.find_by_identifier(project_identifier)
+    if project
+      if configured_custom_field_id = Setting.plugin_redmine_hoptoad_server["project_key_custom_field_id"]
+        custom_field = ProjectCustomField.find(configured_custom_field_id)
+
+        project_value = project.custom_value_for(custom_field)
+        return project_value && project_value.value && project_value.value == api_key
+      end
+    end
+  end
+  
 end
