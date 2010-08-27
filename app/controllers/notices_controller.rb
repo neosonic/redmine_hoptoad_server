@@ -58,7 +58,11 @@ class NoticesController < ApplicationController
         end
 
         unless (TRACE_FILTERS+project_trace_filters).map {|filter| line.to_s.scan(filter)}.flatten.compact.uniq.any?
-          filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
+          if line['file'][0,1] == "/"
+              filtered_backtrace << "source:#{repo_root}/#{line['file']}#L#{line['number']} in `#{line['method']}'\n"
+          else
+              filtered_backtrace << "#{line['file']}:#{line['number']}:in `#{line['method']}'\n"
+          end
         end
       end
 
@@ -75,8 +79,11 @@ class NoticesController < ApplicationController
 
       description =
         if backtrace
-          # build description including a link to source repository
-          "Redmine Notifier reported an Error related to source: #{repo_root}/#{repo_file}#L#{repo_line}"
+          if repo_file[0,1] == "/"
+             "Redmine Notifier reported an Error related to source:#{repo_root}#{repo_file}#L#{repo_line}"
+          else
+             "Redmine Notifier reported an Error related to #{repo_file} on line #{repo_line}"
+          end
         else
           "Redmine Notifier reported an Error"
         end
@@ -126,8 +133,8 @@ class NoticesController < ApplicationController
             "h4. Full backtrace\n\n<pre>#{backtrace}</pre>\n\n" +
             "h4. Request\n\n<pre>#{request.to_xml}</pre>\n\n" +
             "h4. Session\n\n<pre>#{session.to_yaml}</pre>\n\n" +
-            "h4. Environment\n\n<pre>#{server_environment.to_xml}</pre>" +
-            "h4. Full XML\n\n<e>#{@xml.to_xml}</pre>\n\n"
+            "h4. Environment\n\n<pre>#{server_environment.to_xml}</pre>\n\n" +
+            "h4. Full XML\n\n<pre>#{@xml.to_xml}</pre>\n\n"
           )
         elsif issue.description != description # If a user sends a double feedback, save the text into a new comment
           issue.init_journal(author, description)
